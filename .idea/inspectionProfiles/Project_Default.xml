@@ -1,0 +1,20 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="PyUnresolvedReferencesInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredIdentifiers">
+        <list>
+          <option value="ecommerce.store.models.Order.orderitem_set" />
+          <option value="ecommerce.store.models.Product.objects" />
+          <option value="ecommerce.store.models.Order.objects" />
+          <option value="ecommerce.store.models.OrderItem.objects" />
+          <option value="restful.toys.models.Toy.*" />
+          <option value="restful.drones.models.DroneCategory.objects" />
+          <option value="restful.drones.models.Drone.objects" />
+          <option value="restful.drones.models.Pilot.objects" />
+          <option value="restful.drones.models.Competition.objects" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>
