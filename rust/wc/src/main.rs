@@ -1,89 +1,40 @@
-use clap::{command, Arg, ArgAction, ArgMatches};
-use std::{fs::File, io::Read};
+use std::collections::HashMap;
 
-struct Feature<'a, 'b> {
-    flag: &'a str,
-    handler: fn(&'b str),
-}
-
-enum Input {
-    Stdin,
-    File(File),
-}
+mod cli;
+mod file_io;
+mod text_processing;
 
 fn main() -> std::io::Result<()> {
-    let args = parse_args();
-    if let Ok(buffer) = get_buffer(&args) {
-        let features = vec![
-            Feature {
-                flag: "byte",
-                handler: print_total_bytes,
-            },
-            Feature {
-                flag: "line",
-                handler: print_total_lines,
-            },
-            Feature {
-                flag: "word",
-                handler: print_total_words,
-            },
-            Feature {
-                flag: "charcter",
-                handler: print_total_characters,
-            },
-        ];
-        for feature in features {
-            if args.get_flag(feature.flag) {
-                (feature.handler)(&buffer);
+    let matches = cli::parse_args();
+
+    if let Ok(buffer) = file_io::get_buffer(&matches) {
+        let mut features: HashMap<&str, fn(&str)> = HashMap::new();
+        features.insert("byte", text_processing::print_total_bytes);
+        features.insert("line", text_processing::print_total_lines);
+        features.insert("word", text_processing::print_total_words);
+        features.insert("character", text_processing::print_total_characters);
+        let mut flags = features.len();
+
+        // If flags are provided
+        for id in matches.ids() {
+            if id.as_str() != "file" && matches.get_flag(id.as_str()) {
+                (features.get(id.as_str()).unwrap())(&buffer);
+                flags -= 1;
             }
         }
+
+        // If no flags were passed
+        if flags == features.len() {
+            (features.get("line").unwrap())(&buffer);
+            (features.get("word").unwrap())(&buffer);
+            (features.get("byte").unwrap())(&buffer);
+        }
+
+        println!(
+            "{}",
+            matches.get_one::<String>("file").unwrap_or(&"".to_string())
+        );
     }
 
     Ok(())
-
-    // todo!("no flag: -clw");
-    // todo!("read from stdin");
 }
-
-fn parse_args() -> ArgMatches {
-    command!()
-        .arg(Arg::new("byte").short('c').action(ArgAction::SetTrue))
-        .arg(Arg::new("line").short('l').action(ArgAction::SetTrue))
-        .arg(Arg::new("word").short('w').action(ArgAction::SetTrue))
-        .arg(Arg::new("character").short('m').action(ArgAction::SetTrue))
-        .arg(Arg::new("file"))
-        .get_matches()
-    // let file_name: &str = args.get_one::<String>("file").unwrap();
-}
-
-fn get_buffer(args: &ArgMatches) -> std::io::Result<String> {
-    let file_name: &str = args
-        .get_one::<String>("file")
-        .expect("File not provided, trying to read from standard input.");
-    let input_stream: Input;
-    if !file_name.is_empty() {
-        // Try to open the file and handle errors
-        let file = File::open(&file_name)?;
-        input_stream = Input::File(file);
-    } else {
-        input_stream = Input::Stdin;
-    }
-
-    let mut buffer = String::new();
-
-    match input_stream {
-        Input::Stdin => {
-            std::io::stdin().read_to_string(&mut buffer)?;
-        }
-        Input::File(mut file) => {
-            // file.take(1024).read_to_string(&mut buffer)?;
-            file.read_to_string(&mut buffer)?;
-        }
-    }
-    Ok(buffer)
-}
-
-fn print_total_bytes(buffer: &str) {}
-fn print_total_lines(buffer: &str) {}
-fn print_total_words(buffer: &str) {}
-fn print_total_characters(buffer: &str) {}
