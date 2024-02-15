@@ -1,9 +1,11 @@
-use clap::{arg, command, value_parser, ArgAction, Command, Arg, ArgMatches};
+use clap::{command, Arg, ArgMatches};
 use std::collections::{HashMap, BinaryHeap};
-use std::cmp::{min, Ordering, Reverse};
+use std::cmp::{ Ordering, Reverse};
+use bitstream_io::{BitRead, BitReader, BitWrite, BitWriter};
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, BufWriter, Read, Write};
 use unicode_segmentation::UnicodeSegmentation;
+use serde_json;
 
 fn read_text(matches: ArgMatches) -> std::io::Result<String> {
     let file_path = matches.get_one::<String>("file").unwrap();
@@ -120,10 +122,10 @@ fn build_binary_tree(character_weight: &HashMap<&str, usize>) -> Option<HuffmanT
     min_heap.pop().map(|x| x.0)
 }
 
-fn build_prefix_table_recursive<'a>(node: &'a HuffmanBaseNode, code: String, prefix_table: &mut HashMap<&'a str, String>) {
+fn build_prefix_table_recursive(node: &HuffmanBaseNode, code: String, prefix_table: &mut HashMap<String, String>) {
     match node {
         HuffmanBaseNode::Leaf(leaf) => {
-            prefix_table.insert(&leaf.element, code);
+            prefix_table.insert(leaf.element.to_string(), code);
         }
         HuffmanBaseNode::Internal(internal) => {
             build_prefix_table_recursive(&*internal.left, code.clone() + "0", prefix_table);
@@ -132,27 +134,133 @@ fn build_prefix_table_recursive<'a>(node: &'a HuffmanBaseNode, code: String, pre
     }
 }
 
-fn generate_prefix_table(tree: &HuffmanTree) -> HashMap<&str, String> {
-    let mut prefix_table = HashMap::new();
+fn generate_prefix_table(tree: &HuffmanTree) -> HashMap<String, String> {
+    let mut prefix_table: HashMap<String, String> = HashMap::new();
     build_prefix_table_recursive(&tree.root, String::new(), &mut prefix_table);
     prefix_table
 }
 
-fn encode_text() {
-    todo!()
+fn encode_text(text: &str, code: &HashMap<String, String>) -> (Vec<u8>, usize) {
+    let graphemes: Vec<&str> = text.graphemes(true).collect();
+    let mut bit_writer: BitWriter<Vec<u8>, bitstream_io::LittleEndian> = BitWriter::new(Vec::new());
+    let mut size = 0;
+    for grapheme in graphemes {
+        if let Some(code) = code.get(grapheme) {
+            for bit in code.chars() {
+                let bit_value = bit.to_digit(2).unwrap() != 0;
+                bit_writer.write_bit(bit_value).unwrap();
+                size += 1;
+            }
+        }
+    }
+    bit_writer.byte_align().unwrap();
+    bit_writer.flush().unwrap();
+    (bit_writer.into_writer(), size)
 }
 
-fn write_encoded_tree_to_file() {
-    todo!()
+fn write_compressed_file(out_file: &str, code: &HashMap<String, String>, encoded_text_bits: &[u8]) -> std::io::Result<()> {
+    let code_serialized = serde_json::to_string(code);
+    let separator = b"\n---\n";
+    let compressed_data: Vec<u8> = [
+        code_serialized.unwrap().as_bytes(),
+        separator,
+        encoded_text_bits,
+    ].concat();
+    write_to_file(out_file, &compressed_data)
 }
 
-fn main() {
+fn write_to_file(out_file: &str, data: &Vec<u8>) -> std::io::Result<()> {
+    let file = File::create(out_file)?;
+    let mut buf_writer = BufWriter::new(file);
+    buf_writer.write_all(data)?;
+    Ok(())
+}
+
+fn read_from_file(file_path: &str) -> std::io::Result<Vec<u8>> {
+    let file = File::open(file_path)?;
+    let mut buf_reader = BufReader::new(file);
+    let mut content = Vec::new();
+    buf_reader.read_to_end(&mut content)?;
+    Ok(content)
+}
+
+fn read_compressed_file(file_path: &str) -> std::io::Result<(String, Vec<u8>)> {
+    let compressed_data = read_from_file(file_path)?;
+    let separator = b"\n---\n";
+    if let Some(sep_index) = compressed_data.windows(separator.len()).position(|w| w == separator) {
+        let huffman_codes_json = String::from_utf8_lossy(&compressed_data[..sep_index]).trim().to_string();
+        let encoded_text_bits = compressed_data[sep_index + separator.len()..].to_vec();
+        Ok((huffman_codes_json, encoded_text_bits))
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Sepearator not found in the compressed file.",
+        ))
+    }
+}
+
+fn reverse_map<K, V>(original: &HashMap<K, V>) -> HashMap<V, K>
+    where
+        K: Clone + Eq + std::hash::Hash,
+        V: Clone + Eq + std::hash::Hash,
+{
+    let mut reversed = HashMap::new();
+
+    for (key, value) in original.iter() {
+        reversed.insert(value.clone(), key.clone());
+    }
+
+    reversed
+}
+
+fn decode_bits_to_text(encoded_text_bits: &[u8], huffman_codes: &HashMap<String, String>, size: &usize) -> String {
+    let mut decoded_text = String::new();
+    let mut current_code = String::new();
+    let mut bit_reader: BitReader<&[u8], bitstream_io::LittleEndian> = BitReader::new(encoded_text_bits);
+    let mut bit_read = 0;
+    while let Ok(bit) = bit_reader.read_bit() {
+        // Since last byte is probably padded, we need to read to the exact size
+        if bit_read == *size {
+            break;
+        }
+        let bit_val = if bit == false {0} else {1};
+        bit_read += 1;
+        current_code.push_str(&bit_val.to_string());
+        // println!("{}", current_code);
+        if let Some(character) = huffman_codes.get(&current_code) {
+            // print!("{}: {}", current_code, character);
+            decoded_text.push_str(character);
+            current_code.clear();
+        }
+    }
+
+    // println!("{}", current_code);
+    decoded_text
+}
+
+
+fn main() -> std::io::Result<()> {
     let matches = command!()
         .arg(Arg::new("file"))
         .get_matches();
     let file_contents = read_text(matches).ok().unwrap();
+
+    // Compression
     let char_count = find_freq(&file_contents);
     let huffman_tree = build_binary_tree(&char_count).unwrap();
-    let huffman_codes = generate_prefix_table(&huffman_tree);
-    println!("{:?}", huffman_codes);
+    let huffman_codes : HashMap<String, String>= generate_prefix_table(&huffman_tree);
+    // println!("{:?}", huffman_codes);
+    let (encoded_text_bits , size)= encode_text(&file_contents, &huffman_codes);
+    let out_file = "compressed_file.bin";
+    write_compressed_file(out_file, &huffman_codes, &encoded_text_bits)?;
+
+    // Decompression
+    let (huffman_codes_json, encoded_text_bits) = read_compressed_file(out_file)?;
+    // println!("{:?}", huffman_codes);
+    let huffman_codes: HashMap<String, String> = serde_json::from_str(&huffman_codes_json)?;
+    let reverse_mapping = reverse_map(&huffman_codes);
+    let decoded_text = decode_bits_to_text(&encoded_text_bits, &reverse_mapping, &size);
+    // println!("Decoded Text: {}", decoded_text);
+    assert_eq!(file_contents, decoded_text);
+    Ok(())
 }
