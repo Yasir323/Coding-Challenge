@@ -8,12 +8,6 @@ import (
 	"unicode/utf8"
 )
 
-func check(e error) {
-	if e != nil {
-		panic(e)
-	}
-}
-
 func main() {
 	args := os.Args[1:]
 	stream, isFile := getStream(args)
@@ -79,7 +73,7 @@ func parseArgs(args []string, totalBytes int, totalLines int,
 		result += fmt.Sprintf("%d %d %d ", totalLines, totalWords, totalBytes)
 	}
 	if isFile {
-		result += fmt.Sprintf("%s", args[len(args)-1])
+		result += args[len(args)-1]
 	}
 	result += "\n"
 	return result
